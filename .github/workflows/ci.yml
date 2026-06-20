@@ -1,3 +1,15 @@
+# CI Baseline — The-Orion-Companies product repos
+#
+# Runs on every pull_request targeting main.
+# Jobs: lint → test → build (sequential; each depends on the prior).
+#
+# This workflow supports BOTH Node and Python stacks. A job is
+# skipped automatically when its lockfile is absent (no package-lock.json
+# → Node jobs skip; no requirements.txt / pyproject.toml → Python jobs skip).
+# Remove the jobs you don't need once the stack is locked in.
+#
+# Reference: /Users/orionmac/Hermes/Team/docs/ARCH_github_product_repo_standard.md §4
+
 name: CI
 
 on:
@@ -6,13 +18,133 @@ on:
   push:
     branches: [main, test-ci-fix]
 
+# ── permissions (least privilege) ──────────────────────────────
 permissions:
   contents: read
 
+# ── concurrency: one CI per PR, cancel superseded runs ─────────
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
-  smoke:
-    name: Smoke Test
+  # ═══════════════════════════════════════════════════════════
+  # LINT
+  # ═══════════════════════════════════════════════════════════
+  lint-node:
+    name: Lint (Node)
     runs-on: ubuntu-latest
+    if: hashFiles('package-lock.json') != ''
     steps:
       - uses: actions/checkout@v4
-      - run: echo "CI works!"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint --if-present
+
+  lint-python:
+    name: Lint (Python)
+    runs-on: ubuntu-latest
+    if: hashFiles('requirements.txt') != '' || hashFiles('pyproject.toml') != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e ".[dev]"; fi
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check .
+
+      - name: Format check with ruff
+        run: ruff format --check .
+
+  # ═══════════════════════════════════════════════════════════
+  # TEST
+  # ═══════════════════════════════════════════════════════════
+  test-node:
+    name: Test (Node)
+    runs-on: ubuntu-latest
+    needs: [lint-node]
+    if: hashFiles('package-lock.json') != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+
+  test-python:
+    name: Test (Python)
+    runs-on: ubuntu-latest
+    needs: [lint-python]
+    if: hashFiles('requirements.txt') != '' || hashFiles('pyproject.toml') != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e ".[dev]"; fi
+
+      - run: pytest --tb=short -q
+
+  # ═══════════════════════════════════════════════════════════
+  # BUILD
+  # ═══════════════════════════════════════════════════════════
+  build-node:
+    name: Build (Node)
+    runs-on: ubuntu-latest
+    needs: [test-node]
+    if: hashFiles('package-lock.json') != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build --if-present
+
+  build-python:
+    name: Build (Python)
+    runs-on: ubuntu-latest
+    needs: [test-python]
+    if: hashFiles('pyproject.toml') != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+
+      - name: Install build tooling
+        run: pip install --upgrade build
+
+      - run: python -m build
