@@ -1,10 +1,22 @@
+# CI Baseline — The-Orion-Companies product repos
+#
+# Runs on every pull_request targeting main.
+# Jobs: detect → lint → test → build (sequential; each depends on the prior).
+#
+# This workflow supports BOTH Node and Python stacks. A job is
+# skipped automatically when its lockfile is absent (no package-lock.json
+# → Node jobs skip; no requirements.txt / pyproject.toml → Python jobs skip).
+# Remove the jobs you don't need once the stack is locked in.
+#
+# NOTE: hashFiles() is NOT available in job-level `if:` — only in step-level
+# contexts. We use a "detect" job to check which stacks are present and expose
+# the result as outputs, then downstream jobs condition on those outputs.
+
 name: CI
 
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main, test-ci-fix]
 
 permissions:
   contents: read
@@ -14,31 +26,123 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Detect which stacks are present ─────────────────────────
+  detect:
+    name: Detect project stacks
+    runs-on: ubuntu-latest
+    outputs:
+      has-node: ${{ steps.check.outputs.has-node }}
+      has-python: ${{ steps.check.outputs.has-python }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          echo "has-node=$([ -f package-lock.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "has-python=$([ -f requirements.txt ] || [ -f pyproject.toml ]) && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  # ═══════════════════════════════════════════════════════════
+  # LINT
+  # ═══════════════════════════════════════════════════════════
+  lint-node:
+    name: Lint (Node)
+    runs-on: ubuntu-latest
+    needs: [detect]
+    if: needs.detect.outputs.has-node == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint --if-present
+
   lint-python:
     name: Lint (Python)
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('pyproject.toml') }}
+    needs: [detect]
+    if: needs.detect.outputs.has-python == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
           cache: pip
-      - name: Install deps
-        run: pip install ruff
-      - name: Lint
-        run: ruff check .
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e ".[dev]"; fi
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check .
+      - name: Format check with ruff
+        run: ruff format --check .
+
+  # ═══════════════════════════════════════════════════════════
+  # TEST
+  # ═══════════════════════════════════════════════════════════
+  test-node:
+    name: Test (Node)
+    runs-on: ubuntu-latest
+    needs: [lint-node]
+    if: needs.detect.outputs.has-node == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm test
 
   test-python:
     name: Test (Python)
     runs-on: ubuntu-latest
     needs: [lint-python]
+    if: needs.detect.outputs.has-python == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
           cache: pip
-      - name: Install deps
-        run: pip install pytest
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e ".[dev]"; fi
       - run: pytest --tb=short -q
+
+  # ═══════════════════════════════════════════════════════════
+  # BUILD
+  # ═══════════════════════════════════════════════════════════
+  build-node:
+    name: Build (Node)
+    runs-on: ubuntu-latest
+    needs: [test-node]
+    if: needs.detect.outputs.has-node == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build --if-present
+
+  build-python:
+    name: Build (Python)
+    runs-on: ubuntu-latest
+    needs: [test-python]
+    if: needs.detect.outputs.has-python == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+      - name: Install build tooling
+        run: pip install --upgrade build
+      - run: python -m build
