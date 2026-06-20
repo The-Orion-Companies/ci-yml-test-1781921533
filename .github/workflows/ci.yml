@@ -17,7 +17,7 @@ jobs:
   lint-python:
     name: Lint (Python)
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ hashFiles('pyproject.toml') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
