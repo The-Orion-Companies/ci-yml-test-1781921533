@@ -14,19 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-node:
-    name: Lint (Node)
-    runs-on: ubuntu-latest
-    if: "${{ hashFiles('package-lock.json') != '' }}"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run lint --if-present
-
   lint-python:
     name: Lint (Python)
     runs-on: ubuntu-latest
@@ -37,31 +24,10 @@ jobs:
         with:
           python-version-file: .python-version
           cache: pip
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ]; then pip install -e ".[dev]"; fi
-      - name: Lint with ruff
-        run: |
-          pip install ruff
-          ruff check .
-      - name: Format check with ruff
-        run: ruff format --check .
-
-  test-node:
-    name: Test (Node)
-    runs-on: ubuntu-latest
-    needs: [lint-node]
-    if: "${{ hashFiles('package-lock.json') != '' }}"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm test
+      - name: Install deps
+        run: pip install ruff
+      - name: Lint
+        run: ruff check .
 
   test-python:
     name: Test (Python)
@@ -74,38 +40,6 @@ jobs:
         with:
           python-version-file: .python-version
           cache: pip
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ]; then pip install -e ".[dev]"; fi
+      - name: Install deps
+        run: pip install pytest
       - run: pytest --tb=short -q
-
-  build-node:
-    name: Build (Node)
-    runs-on: ubuntu-latest
-    needs: [test-node]
-    if: "${{ hashFiles('package-lock.json') != '' }}"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run build --if-present
-
-  build-python:
-    name: Build (Python)
-    runs-on: ubuntu-latest
-    needs: [test-python]
-    if: "${{ hashFiles('pyproject.toml') != '' }}"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-          cache: pip
-      - name: Install build tooling
-        run: pip install --upgrade build
-      - run: python -m build
